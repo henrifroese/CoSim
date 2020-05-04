@@ -307,7 +307,7 @@ def update_graph(_, initial_cases, initial_date, population, icu_beds, p_I_to_C,
 
     r0_data_x = [datapoint["Date"] for datapoint in r0_data]
     r0_data_y = [datapoint["R value"] if ((not np.isnan(datapoint["R value"])) or (datapoint["R value"] >= 0))  else 0 for datapoint in r0_data]
-    f = interpolate.interp1d([0, 1, 2, 3, 4, 5, 6, 7, 8], r0_data_y, kind='cubic')
+    f = interpolate.interp1d([0, 1, 2, 3, 4, 5, 6, 7, 8], r0_data_y, kind='linear')
     r0_x_dates = pd.date_range(start=np.datetime64("2020-01-01"), end=np.datetime64("2020-09-01"), freq="D")
     r0_y_interpolated = f(np.linspace(0, 8, num=len(r0_x_dates))).tolist()
 
