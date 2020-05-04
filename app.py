@@ -50,41 +50,43 @@ sigma = 1.0/3.0
 def logistic_R_0(t, R_0_start, k, x0, R_0_end):
     return (R_0_start-R_0_end) / (1 + np.exp(-k*(-t+x0))) + R_0_end
 
-def Model(initial_date, N, beds_per_100k, R_0_start, k, x0, R_0_end, p_I_to_C, p_C_to_D, s, r0_y_interpolated=None):
+
+def Model(initial_cases, initial_date, N, beds_per_100k, R_0_start, k, x0, R_0_end, p_I_to_C, p_C_to_D, s, r0_y_interpolated=None):
     days = 360
+
     def beta(t):
         return logistic_R_0(t, R_0_start, k, x0, R_0_end) * gamma
-    
+
     def Beds(t):
         beds_0 = beds_per_100k / 100_000 * N
         return beds_0 + s*beds_0*t  # 0.003
-
-
-    diff = int((np.datetime64("2020-01-01") - np.datetime64(initial_date)) / np.timedelta64(1, "D"))
+    diff = int((np.datetime64("2020-01-01") -
+                np.datetime64(initial_date)) / np.timedelta64(1, "D"))
     if diff > 0:
-        r0_y_interpolated = [r0_y_interpolated[0] for _ in range(diff-1)] + r0_y_interpolated
+        r0_y_interpolated = [r0_y_interpolated[0]
+                             for _ in range(diff-1)] + r0_y_interpolated
     elif diff < 0:
         r0_y_interpolated = r0_y_interpolated[(-diff):]
 
     last_date = np.datetime64(initial_date) + np.timedelta64(days-1, "D")
-    missing_days_r0 = int((last_date - np.datetime64("2020-09-01")) / np.timedelta64(1, "D"))
-    r0_y_interpolated += [r0_y_interpolated[-1] for _ in range(missing_days_r0+1)]
+    missing_days_r0 = int(
+        (last_date - np.datetime64("2020-09-01")) / np.timedelta64(1, "D"))
+    r0_y_interpolated += [r0_y_interpolated[-1]
+                          for _ in range(missing_days_r0+1)]
 
-    y0 = N-1.0, 1.0, 0.0, 0.0, 0.0, 0.0
+    y0 = N-initial_cases, initial_cases, 0.0, 0.0, 0.0, 0.0
     t = np.linspace(0, days, days)
     print(t)
     ret = odeint(deriv, y0, t, args=(r0_y_interpolated,
-                                        gamma, sigma, N, p_I_to_C, p_C_to_D, Beds))
+                                     gamma, sigma, N, p_I_to_C, p_C_to_D, Beds))
     S, E, I, C, R, D = ret.T
     R_0_over_time = r0_y_interpolated
     total_CFR = [0] + [100 * D[i] / sum(sigma*E[:i]) if sum(
         sigma*E[:i]) > 0 else 0 for i in range(1, len(t))]
     daily_CFR = [0] + [100 * ((D[i]-D[i-1]) / ((R[i]-R[i-1]) + (D[i]-D[i-1]))) if max(
         (R[i]-R[i-1]), (D[i]-D[i-1])) > 10 else 0 for i in range(1, len(t))]
-
-
-
-    dates = pd.date_range(start=np.datetime64(initial_date), periods=days, freq="D")
+    dates = pd.date_range(start=np.datetime64(
+        initial_date), periods=days, freq="D")
 
     return dates, S, E, I, C, R, D, R_0_over_time, total_CFR, daily_CFR, [Beds(i) for i in range(len(t))]
 
@@ -100,12 +102,9 @@ app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 server = app.server
 app.title="CoSim"
 
-colors = {
-    'background': '#ffffff',
-    'text': '#111133'
-}
 
-# the controls where the parameters can be tuned
+# these are the controls where the parameters can be tuned.
+# They are not placed on the screen here, we just define them.
 controls = dbc.Card(
     [
         dbc.FormGroup(
@@ -124,6 +123,16 @@ controls = dbc.Card(
                 ),
             ]
         ),
+        dbc.FormGroup(
+            [
+                dbc.Label("Initial Cases"),
+                dbc.Input(
+                    id="initial_cases", type="number", placeholder="initial_cases",
+                    min=1, max=1_000_000, step=1, value=10,
+                )
+            ]
+        ),
+
         dbc.FormGroup(
             [
                 dbc.Label("Population"),
@@ -246,7 +255,7 @@ app.layout = dbc.Container(
                 dbc.Col(controls, md=3),  # controls
                 dbc.Col(  # graphs
                     [
-                        dcc.Graph(id='io_graph'),
+                        dcc.Graph(id='main_graph'),
                         dcc.Graph(id='r0_graph'),
                         dbc.Row(
                             [
@@ -270,7 +279,7 @@ app.layout = dbc.Container(
 
 
 @app.callback(
-    [dash.dependencies.Output('io_graph', 'figure'),
+    [dash.dependencies.Output('main_graph', 'figure'),
      dash.dependencies.Output('cfr_graph', 'figure'),
      dash.dependencies.Output('r0_graph', 'figure'),
      dash.dependencies.Output('deaths_graph', 'figure'),
@@ -278,7 +287,8 @@ app.layout = dbc.Container(
      
     [dash.dependencies.Input('submit-button-state', 'n_clicks')],
 
-    [dash.dependencies.State('initial_date', 'date'),
+    [dash.dependencies.State('initial_cases', 'value'),
+     dash.dependencies.State('initial_date', 'date'),
      dash.dependencies.State('population', 'value'),
      dash.dependencies.State('icu_beds', 'value'),
      dash.dependencies.State('p_I_to_C', 'value'),
@@ -288,9 +298,8 @@ app.layout = dbc.Container(
      ]
 )
 
+def update_graph(_, initial_cases, initial_date, population, icu_beds, p_I_to_C, p_C_to_D, r0_data, r0_columns):
 
-def update_graph(_, initial_date, population, icu_beds, p_I_to_C, p_C_to_D, r0_data, r0_columns):
-    
     last_initial_date, last_population, last_icu_beds, last_p_I_to_C, last_p_C_to_D = "2020-01-15", 1_000_000, 5.0, 5.0, 50.0
     if not (initial_date and population and icu_beds and p_I_to_C and p_C_to_D):
         initial_date, population, icu_beds, p_I_to_C, p_C_to_D = last_initial_date, last_population, last_icu_beds, last_p_I_to_C, last_p_C_to_D
@@ -302,7 +311,7 @@ def update_graph(_, initial_date, population, icu_beds, p_I_to_C, p_C_to_D, r0_d
     r0_x_dates = pd.date_range(start=np.datetime64("2020-01-01"), end=np.datetime64("2020-09-01"), freq="D")
     r0_y_interpolated = f(np.linspace(0, 8, num=len(r0_x_dates))).tolist()
 
-    dates, S, E, I, C, R, D, R_0_over_time, total_CFR, daily_CFR, B = Model(initial_date, population, icu_beds, 3.0, 0.01, 50, 2.3, float(p_I_to_C)/100, float(p_C_to_D)/100, 0.001, r0_y_interpolated)
+    dates, S, E, I, C, R, D, R_0_over_time, total_CFR, daily_CFR, B = Model(initial_cases, initial_date, population, icu_beds, 3.0, 0.01, 50, 2.3, float(p_I_to_C)/100, float(p_C_to_D)/100, 0.001, r0_y_interpolated)
 
     return {  # return graph for compartments, graph for fatality rates, graph for reproduction rate, and graph for deaths over time
         'data': [
